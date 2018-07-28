@@ -8,14 +8,14 @@ import (
 	"math"
 )
 
+// Errors reflecting invalid operations on a Merkle tree.
 var (
-	// ErrDirtyMerkleTree reflects an error signifying the Merkle tree hash not
-	// yet been finalized.
 	ErrDirtyMerkleTree = errors.New("merkle tree has not been finalized")
-	// ErrEmptyMerkleTree reflects an error signifying the Merkle tree is
-	// empty.
 	ErrEmptyMerkleTree = errors.New("merkle tree has no data blocks")
+	ErrNilBlock        = errors.New("block cannot be nil")
+)
 
+var (
 	internalNodePrefix = '\x01'
 	leafNodePrefix     = '\x00'
 )
@@ -41,12 +41,6 @@ type (
 		dirty  bool
 		depth  int
 	}
-
-	// Block reflects a block of data to be stored in the tree.
-	Block []byte
-	// Hash reflects a unique and uniformly distributed hash of a node in the
-	// tree.
-	Hash []byte
 )
 
 // NewMerkleTree returns a reference to a new initialized Merkle tree with a
@@ -58,21 +52,32 @@ func NewMerkleTree(blocks ...Block) *MerkleTree {
 	}
 }
 
-// Insert inserts a new data block into the Merkle tree. This operations marks
-// the tree as dirty and thus Finalize will need to be invoked to recreate the
-// root hash.
-func (mt *MerkleTree) Insert(b Block) {
-	if b == nil {
-		return
+// String implements the Stringer interface. It returns the string-encoded root
+// hash with a '0x' prefix.
+func (mt *MerkleTree) String() (s string) {
+	if rh, err := mt.RootHash(); err == nil {
+		s = fmt.Sprintf("0x%s", hex.EncodeToString(rh))
 	}
 
-	mt.dirty = true
+	return
+}
+
+// Insert inserts a new data block into the Merkle tree. This operations marks
+// the tree as dirty and thus Finalize will need to be invoked to recreate the
+// root hash. An error is returned if the given block is nil.
+func (mt *MerkleTree) Insert(b Block) error {
+	if b == nil {
+		return ErrNilBlock
+	}
+
+	// TODO: Handle already finalized tree???
 
 	if mt.blocks == nil {
 		mt.blocks = []Block{}
 	}
 
 	mt.blocks = append(mt.blocks, b)
+	return nil
 }
 
 // Finalize builds a SHA256 cryptographically hashed Merkle tree from a list of
@@ -107,13 +112,13 @@ func (mt *MerkleTree) Finalize() error {
 	// set leaf nodes from blocks
 	j := len(mt.nodes) - len(mt.blocks)
 	for _, b := range mt.blocks {
-		mt.nodes[j] = mt.hash(mt.depth-1, b[:])
+		mt.nodes[j] = mt.hash(mt.depth-1, b.Bytes())
 		j++
 	}
 
-	mt.finalize(0, 0)
-
+	mt.root = mt.finalize(0, 0)
 	mt.dirty = false
+	fmt.Println("HASH:", hex.EncodeToString(mt.root))
 	return nil
 }
 
@@ -124,18 +129,16 @@ func (mt *MerkleTree) RootHash() (Hash, error) {
 		return nil, fmt.Errorf("invalid root hash: %v", ErrDirtyMerkleTree)
 	}
 
-	return mt.nodes[0], nil
+	return mt.root, nil
 }
 
-// String implements the Stringer interface. It returns the string-encoded root
-// hash with a '0x' prefix.
-func (mt *MerkleTree) String() (s string) {
-	if rh, err := mt.RootHash(); err == nil {
-		s = fmt.Sprintf("0x%s", hex.EncodeToString(rh))
-	}
+// TODO: ...
+// func (mt *MerkleTree) Proof(block Block) ([]Hash, error) {
+// 	if !bytes.Equal(mt.blocks[i], block) {
+// 		return nil, fmt.Errorf("invalid block at index %d", i)
+// 	}
 
-	return
-}
+// }
 
 // finalize recursively fills out the Merkle tree starting at a given node by
 // nodeIdx and a given depth for that node. In other words, it builds the
@@ -155,7 +158,7 @@ func (mt *MerkleTree) finalize(nodeIdx, depth int) Hash {
 // hash returns a SHA256 hash of a byte slice with a specified prefix. The
 // depth determines which prefix to use.
 func (mt *MerkleTree) hash(depth int, data []byte) Hash {
-	raw := make(Block, len(data)+1)
+	raw := make(Hash, len(data)+1)
 
 	if depth == mt.depth-1 {
 		raw[0] = byte(leafNodePrefix)
