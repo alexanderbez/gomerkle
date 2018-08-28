@@ -80,6 +80,16 @@ func (mt *MerkleTree) Insert(b Block) error {
 	return nil
 }
 
+// RootHash returns the root hash of a finalized Merkle tree. An error is
+// returned if the tree has not been finalized yet.
+func (mt *MerkleTree) RootHash() ([]byte, error) {
+	if mt.dirty {
+		return nil, fmt.Errorf("invalid root hash: %v", ErrDirtyMerkleTree)
+	}
+
+	return copyNode(mt.root).Bytes(), nil
+}
+
 // Finalize builds a SHA256 cryptographically hashed Merkle tree from a list of
 // data blocks. If no blocks exist in the tree, an error is returned. The
 // following invariants will be enforced:
@@ -110,7 +120,7 @@ func (mt *MerkleTree) Finalize() error {
 	// set leaf nodes from the blocks
 	j := len(mt.nodes) - len(mt.blocks)
 	for _, b := range mt.blocks {
-		mt.nodes[j] = mt.hashNode(b.Bytes(), false)
+		mt.nodes[j] = hashNode(b.Bytes(), false)
 		j++
 	}
 
@@ -120,14 +130,19 @@ func (mt *MerkleTree) Finalize() error {
 	return nil
 }
 
-// RootHash returns the root hash of a finalized Merkle tree. An error is
-// returned if the tree has not been finalized yet.
-func (mt *MerkleTree) RootHash() ([]byte, error) {
-	if mt.dirty {
-		return nil, fmt.Errorf("invalid root hash: %v", ErrDirtyMerkleTree)
+// finalize recursively fills out the Merkle tree starting at a given node by
+// nodeIdx and a given depth for that node. In other words, it builds the
+// Merkle tree from the ground up.
+func (mt *MerkleTree) finalize(nodeIdx int) Node {
+	if !mt.hasChild(nodeIdx) {
+		return mt.nodes[nodeIdx]
 	}
 
-	return copyNode(mt.root).Bytes(), nil
+	left := mt.finalize(2*nodeIdx + 1)
+	right := mt.finalize(2*nodeIdx + 2)
+
+	mt.nodes[nodeIdx] = hashNode(append(left, right...), true)
+	return mt.nodes[nodeIdx]
 }
 
 // Proof returns a cryptographic Merkle proof for the existence of some block.
@@ -138,32 +153,14 @@ func (mt *MerkleTree) RootHash() ([]byte, error) {
 // for any given node (starting at the provided block), add it's sibling to the
 // proof and then set the current node to the current node's parent, repeating
 // until the root is reached.
-func (mt *MerkleTree) Proof(block Block) ([]Node, error) {
+func (mt MerkleTree) Proof(block Block) ([]Node, error) {
 	if mt.dirty {
 		return nil, fmt.Errorf("cannot provide proof for a dirty Merkle tree")
 	}
 
-	var (
-		leaf    Node
-		leafIdx int
-	)
-
-	i := 0
-	j := len(mt.nodes) - len(mt.blocks) // contains possible leaf index range
-
-	// attempt to find the leaf corresponding to the block
-	for i < len(mt.blocks) && j < len(mt.nodes) && leaf == nil {
-		if bytes.Equal(mt.blocks[i].Bytes(), block.Bytes()) {
-			leaf = mt.nodes[j]
-			leafIdx = j
-		}
-
-		i++
-		j++
-	}
-
-	if leaf == nil {
-		return nil, fmt.Errorf("block does not exist: %v", hex.EncodeToString(block))
+	leafIdx, err := mt.findLeaf(block)
+	if err != nil {
+		return nil, err
 	}
 
 	k := 0
@@ -195,19 +192,74 @@ func (mt *MerkleTree) Proof(block Block) ([]Node, error) {
 	return proof, nil
 }
 
-// finalize recursively fills out the Merkle tree starting at a given node by
-// nodeIdx and a given depth for that node. In other words, it builds the
-// Merkle tree from the ground up.
-func (mt *MerkleTree) finalize(nodeIdx int) Node {
-	if !mt.hasChild(nodeIdx) {
-		return mt.nodes[nodeIdx]
+// Verify performs a cryptographic Merkle tree verification for a given block
+// and proof. If the given proof can be constructed up to the Merkle root
+// correctly, the proof is valid. Otherwise, an error is returned.
+func (mt MerkleTree) Verify(block Block, proof []Node) error {
+	if mt.dirty {
+		return fmt.Errorf("cannot validate proof for a dirty Merkle tree")
 	}
 
-	left := mt.finalize(2*nodeIdx + 1)
-	right := mt.finalize(2*nodeIdx + 2)
+	leafIdx, err := mt.findLeaf(block)
+	if err != nil {
+		return err
+	}
 
-	mt.nodes[nodeIdx] = mt.hashNode(append(left, right...), true)
-	return mt.nodes[nodeIdx]
+	currNodeIdx := leafIdx
+
+	for i, proofChunk := range proof {
+		var parentNode Node
+
+		proofChunkCpy := copyNode(proofChunk)
+		currNodeCpy := copyNode(mt.nodes[currNodeIdx])
+
+		if currNodeIdx%2 == 0 {
+			parentNode = hashNode(append(proofChunkCpy, currNodeCpy...), true)
+		} else {
+			parentNode = hashNode(append(currNodeCpy, proofChunkCpy...), true)
+		}
+
+		parentNodeIdx := (currNodeIdx - 1) / 2
+		matchNode := mt.nodes[parentNodeIdx]
+
+		if !bytes.Equal(parentNode.Bytes(), matchNode.Bytes()) {
+			return fmt.Errorf("invalid proof at index %d for block %X; got: %X, want: %X",
+				i, block, parentNode.Bytes(), matchNode.Bytes())
+		}
+
+		currNodeIdx = parentNodeIdx
+	}
+
+	return nil
+}
+
+// findLeaf attempts to find a leaf node's index that corresponds to a given
+// block. An error is returned if the block does not exist.
+func (mt MerkleTree) findLeaf(block Block) (int, error) {
+	var (
+		leaf    Node
+		leafIdx int
+	)
+
+	i := 0
+	j := len(mt.nodes) - len(mt.blocks) // contains possible leaf index range
+
+	// attempt to find the leaf corresponding to the block
+	for i < len(mt.blocks) && j < len(mt.nodes) && leaf == nil {
+		if bytes.Equal(mt.blocks[i].Bytes(), block.Bytes()) {
+			leaf = mt.nodes[j]
+			leafIdx = j
+		}
+
+		i++
+		j++
+	}
+
+	if leaf == nil {
+		return 0, fmt.Errorf("block does not exist: %v", hex.EncodeToString(block))
+	}
+
+	return leafIdx, nil
 }
 
 // hasChild returns true if a node at a given index in the Merkle tree has a
@@ -222,7 +274,7 @@ func (mt MerkleTree) hasChild(nodeIdx int) bool {
 
 // hashNode returns a SHA256 hash of a node's raw byte slice with a specified
 // prefix which depends on if the node is internal or not.
-func (mt MerkleTree) hashNode(data []byte, internal bool) Node {
+func hashNode(data []byte, internal bool) Node {
 	raw := make(Node, len(data)+1)
 
 	if internal {
@@ -242,10 +294,4 @@ func copyNode(node Node) Node {
 	cpy := make(Node, len(node))
 	copy(cpy, node)
 	return cpy
-}
-
-func (mt MerkleTree) debugTree() {
-	for i, n := range mt.nodes {
-		fmt.Printf("node: (index %d, hash: %X)\n", i, n)
-	}
 }
