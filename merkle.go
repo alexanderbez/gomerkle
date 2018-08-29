@@ -11,9 +11,10 @@ import (
 
 // Errors reflecting invalid operations on a Merkle tree.
 var (
-	ErrDirtyMerkleTree = errors.New("merkle tree has not been finalized")
-	ErrEmptyMerkleTree = errors.New("merkle tree has no data blocks")
-	ErrNilBlock        = errors.New("block cannot be nil")
+	ErrDirtyMerkleTree    = errors.New("merkle tree has not been finalized")
+	ErrNotDirtyMerkleTree = errors.New("merkle tree has been finalized")
+	ErrEmptyMerkleTree    = errors.New("merkle tree has no data blocks")
+	ErrNilBlock           = errors.New("block cannot be nil")
 )
 
 var (
@@ -70,7 +71,9 @@ func (mt *MerkleTree) Insert(b Block) error {
 		return ErrNilBlock
 	}
 
-	// TODO: Handle already finalized tree???
+	if !mt.dirty {
+		return fmt.Errorf("cannot insert into Merkle tree: %v", ErrNotDirtyMerkleTree)
+	}
 
 	if mt.blocks == nil {
 		mt.blocks = []Block{}
@@ -105,7 +108,7 @@ func (mt *MerkleTree) Finalize() error {
 		return fmt.Errorf("failed to finalize: %v", ErrEmptyMerkleTree)
 	}
 
-	// no need to finalize the tree if it has already been constructed
+	// no need to finalize the tree if it has already been constructed/finalized
 	if !mt.dirty {
 		return nil
 	}
