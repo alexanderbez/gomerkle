@@ -248,10 +248,12 @@ func (mt MerkleTree) findLeaf(block Block) (int, error) {
 	j := len(mt.nodes) - len(mt.blocks) // contains possible leaf index range
 
 	// attempt to find the leaf corresponding to the block
-	for i < len(mt.blocks) && j < len(mt.nodes) && leaf == nil {
+	for i < len(mt.blocks) {
 		if bytes.Equal(mt.blocks[i].Bytes(), block.Bytes()) {
 			leaf = mt.nodes[j]
 			leafIdx = j
+
+			break
 		}
 
 		i++
@@ -282,8 +284,6 @@ func hashNode(data []byte, internal bool) Node {
 
 	if internal {
 		raw[0] = byte(internalNodePrefix)
-	} else {
-		raw[0] = byte(leafNodePrefix)
 	}
 
 	copy(raw[1:], data)
