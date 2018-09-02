@@ -2,6 +2,7 @@
 
 [![GoDoc](https://godoc.org/github.com/alexanderbez/gomerkle?status.svg)](https://godoc.org/github.com/alexanderbez/gomerkle)
 [![Build Status](https://travis-ci.org/alexanderbez/gomerkle.svg?branch=master)](https://travis-ci.org/alexanderbez/gomerkle)
+[![Go Report Card](https://goreportcard.com/badge/github.com/alexanderbez/gomerkle)](https://goreportcard.com/report/github.com/alexanderbez/gomerkle)
 
 An implementation of a [Merkle Tree](https://en.wikipedia.org/wiki/Merkle_tree)
 data structure in Golang using the SHA256 cryptographic hashing algorithm with
